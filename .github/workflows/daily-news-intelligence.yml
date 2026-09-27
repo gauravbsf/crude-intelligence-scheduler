@@ -1,0 +1,55 @@
+name: Crude Intelligence daily news and AI analysis
+
+on:
+  schedule:
+    - cron: "35 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crude-intelligence-daily-news
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run audited daily crude and geopolitical news ingestion
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --max-time 360 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Scheduler: github-actions" \
+            -H "Accept: application/json" \
+            -o run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/daily/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("run.json", "utf8"));
+            const accepted = ["ready", "partial"].includes(data.status);
+            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
+            const expectedJob = data.run?.jobName === "daily-news-intelligence";
+            if (!accepted || !expectedTrigger || !expectedJob) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              runId: data.run.id,
+              trigger: data.run.trigger,
+              eventsSeen: data.run.eventsSeen,
+              eventsStored: data.run.eventsStored,
+              completedAt: data.run.completedAt,
+              message: data.run.message
+            }));
+          '
