@@ -1,0 +1,62 @@
+name: Crude Intelligence JODI ingestion
+
+on:
+  schedule:
+    - cron: "20 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crude-intelligence-jodi-ingestion
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out controlled ETL
+        uses: actions/checkout@v4
+
+      - name: Build compact official JODI payload
+        run: python3 scripts/build_jodi_payload.py jodi-payload.json
+
+      - name: Store audited JODI vintage
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --max-time 180 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Scheduler: github-actions" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            --data-binary @jodi-payload.json \
+            -o run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/ingestion/jodi"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("run.json", "utf8"));
+            const healthyStorage = ["stored", "already-stored"].includes(data.storage?.state);
+            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
+            if (data.status !== "ready" || !healthyStorage || !expectedTrigger) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              runId: data.run.id,
+              storage: data.storage.state,
+              vintageKey: data.storage.vintageKey,
+              observations: data.storage.observationCount,
+              dataPeriod: data.dataPeriod,
+              sourceSha256: data.sourceSha256
+            }));
+          '
