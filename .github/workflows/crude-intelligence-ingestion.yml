@@ -1,0 +1,51 @@
+name: Crude Intelligence five-minute ingestion
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crude-intelligence-five-minute-ingestion
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Run audited news-correlation ingestion
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --max-time 120 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Scheduler: github-actions" \
+            -H "Accept: application/json" \
+            -o run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("run.json", "utf8"));
+            const accepted = ["ready", "partial"].includes(data.status);
+            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
+            if (!accepted || !expectedTrigger) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              runId: data.run.id,
+              trigger: data.run.trigger,
+              completedAt: data.run.completedAt
+            }));
+          '
