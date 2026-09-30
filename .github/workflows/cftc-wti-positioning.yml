@@ -1,0 +1,57 @@
+name: Crude Intelligence weekly CFTC WTI positioning
+
+on:
+  schedule:
+    - cron: "30 22 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crude-intelligence-cftc-wti-positioning
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run audited weekly CFTC WTI ingestion
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --max-time 180 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Scheduler: github-actions" \
+            -H "Accept: application/json" \
+            -o run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/ingestion/cftc/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("run.json", "utf8"));
+            const healthyStorage = ["stored", "already-stored"].includes(data.storage?.state);
+            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
+            const expectedJob = data.run?.jobName === "official-cftc-wti-positioning";
+            const validRevision = /^[a-f0-9]{64}$/i.test(data.sourceSha256 || "");
+            if (data.status !== "ready" || !healthyStorage || !expectedTrigger || !expectedJob || !validRevision) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              runId: data.run.id,
+              storage: data.storage.state,
+              vintageKey: data.storage.vintageKey,
+              dataPeriod: data.dataPeriod,
+              sourceSha256: data.sourceSha256,
+              revisionState: data.revision?.state,
+              completedAt: data.run.completedAt
+            }));
+          '
