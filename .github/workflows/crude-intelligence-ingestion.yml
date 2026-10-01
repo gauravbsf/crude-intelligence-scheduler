@@ -15,7 +15,7 @@ concurrency:
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Run audited news-correlation ingestion
         env:
@@ -46,6 +46,41 @@ jobs:
               status: data.status,
               runId: data.run.id,
               trigger: data.run.trigger,
+              completedAt: data.run.completedAt
+            }));
+          '
+
+      - name: Run governed MCX quote-history capture
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --max-time 120 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Scheduler: github-actions" \
+            -H "Accept: application/json" \
+            -o history-run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/history/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("history-run.json", "utf8"));
+            const healthyStorage = ["stored", "already-stored"].includes(data.run?.storageState);
+            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
+            if (data.status !== "ready" || data.readOnly !== true || !healthyStorage || !expectedTrigger) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              readOnly: data.readOnly,
+              runId: data.run.id,
+              storage: data.run.storageState,
+              snapshotKey: data.run.snapshotKey,
               completedAt: data.run.completedAt
             }));
           '

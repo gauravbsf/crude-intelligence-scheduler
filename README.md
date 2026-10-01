@@ -2,7 +2,7 @@
 
 This small public repository runs four read-only jobs for the owner-private Crude Intelligence India site using GitHub Actions:
 
-- news-event price-correlation capture every five minutes; and
+- news-event price-correlation and governed MCX quote-history capture every five minutes; and
 - official JODI crude-oil bulk-data ingestion once daily; and
 - broad official crude/geopolitical news collection and controlled impact analysis once daily; and
 - official CFTC NYMEX WTI positioning ingestion once weekly.
@@ -11,7 +11,8 @@ This small public repository runs four read-only jobs for the owner-private Crud
 
 - The repository contains no Site credential or market-account secret.
 - The private Site authorization token is stored only as the encrypted GitHub Actions secret `CRUDE_INTELLIGENCE_SITE_TOKEN`.
-- The workflow calls only the read-only intelligence endpoint.
+- The workflow calls only read-only intelligence and market-data capture endpoints.
+- MCX snapshots are append-only research history. They cannot place orders or activate the production Technical or Hybrid score.
 - The JODI workflow filters the official bulk archive to a compact 24-month payload for controlled countries and measures, then records the source SHA-256 checksum.
 - The CFTC workflow uses the official keyless CFTC public data service and records the source SHA-256 checksum for revision detection.
 - Trading, order placement and account functions remain disabled.
@@ -32,6 +33,8 @@ GitHub automatically disables scheduled workflows in public repositories after 6
 ## Production target
 
 `POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/run`
+
+`POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/history/run`
 
 `POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/ingestion/jodi`
 
