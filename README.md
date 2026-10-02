@@ -2,7 +2,7 @@
 
 This small public repository runs four read-only jobs for the owner-private Crude Intelligence India site using GitHub Actions:
 
-- news-event price-correlation and governed MCX quote-history capture every five minutes; and
+- independent news-event price-correlation and governed MCX quote-history jobs every five minutes; and
 - official JODI crude-oil bulk-data ingestion once daily; and
 - broad official crude/geopolitical news collection and controlled impact analysis once daily; and
 - official CFTC NYMEX WTI positioning ingestion once weekly.
@@ -22,6 +22,14 @@ This small public repository runs four read-only jobs for the owner-private Crud
 
 The workflow is scheduled with `*/5 * * * *` (UTC) and can also be run manually for verification. GitHub may occasionally delay scheduled jobs during periods of high service load.
 
+Every five-minute workflow starts the market-history and news-correlation jobs
+in parallel. The market job captures MCX first, retries transient failures,
+verifies that the newest health-ledger run ID matches the capture, and then
+evaluates the versioned technical-research gate. News failures therefore cannot
+delay or suppress market capture. The research call accepts only controlled
+`not-eligible`, `stored` or `already-stored` outcomes and confirms that
+production technical execution remains disabled.
+
 The JODI workflow is scheduled at `02:20 UTC` daily. Repeated source files are idempotent; a changed controlled dataset or source revision creates a new append-only vintage.
 
 The broad news workflow is scheduled at `02:35 UTC` (`08:05 Asia/Kolkata`) daily. It calls the owner-private Site, where server-side source policy and analysis are enforced; the public scheduler repository contains no news or AI API secret.
@@ -35,6 +43,10 @@ GitHub automatically disables scheduled workflows in public repositories after 6
 `POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/run`
 
 `POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/history/run`
+
+`GET https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/history/status`
+
+`POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/technical/research/run`
 
 `POST https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/ingestion/jodi`
 

@@ -8,57 +8,26 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: crude-intelligence-five-minute-ingestion
-  cancel-in-progress: false
-
 jobs:
-  ingest:
+  market-history:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
+    concurrency:
+      group: crude-intelligence-mcx-five-minute
+      cancel-in-progress: false
     steps:
-      - name: Run audited news-correlation ingestion
+      - name: Capture governed MCX quote history first
         env:
           SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           curl --fail-with-body --silent --show-error \
-            --retry 2 \
-            --max-time 120 \
-            -X POST \
-            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
-            -H "X-CrudeIntel-Scheduler: github-actions" \
-            -H "Accept: application/json" \
-            -o run.json \
-            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/run"
-
-          node -e '
-            const fs = require("fs");
-            const data = JSON.parse(fs.readFileSync("run.json", "utf8"));
-            const accepted = ["ready", "partial"].includes(data.status);
-            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
-            if (!accepted || !expectedTrigger) {
-              console.error(JSON.stringify(data));
-              process.exit(1);
-            }
-            console.log(JSON.stringify({
-              status: data.status,
-              runId: data.run.id,
-              trigger: data.run.trigger,
-              completedAt: data.run.completedAt
-            }));
-          '
-
-      - name: Run governed MCX quote-history capture
-        env:
-          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail-with-body --silent --show-error \
-            --retry 2 \
-            --max-time 120 \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-delay 8 \
+            --connect-timeout 10 \
+            --max-time 45 \
             -X POST \
             -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
             -H "X-CrudeIntel-Scheduler: github-actions" \
@@ -81,6 +50,117 @@ jobs:
               runId: data.run.id,
               storage: data.run.storageState,
               snapshotKey: data.run.snapshotKey,
+              completedAt: data.run.completedAt
+            }));
+          '
+
+      - name: Verify capture ledger and cadence state
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "Accept: application/json" \
+            -o history-status.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/history/status"
+
+          node -e '
+            const fs = require("fs");
+            const run = JSON.parse(fs.readFileSync("history-run.json", "utf8"));
+            const status = JSON.parse(fs.readFileSync("history-status.json", "utf8"));
+            if (status.status !== "ready" || status.latestRun?.id !== run.run?.id || status.productionTechnicalEligible !== false) {
+              console.error(JSON.stringify({ run, status }));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: status.status,
+              runId: status.latestRun.id,
+              sampleCount: status.sampleCount,
+              health: status.health?.overallState,
+              latestObservedAt: status.lastObservedAt
+            }));
+          '
+
+      - name: Evaluate reproducible indicator and backtest gates
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 45 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "Accept: application/json" \
+            -o research-run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/market/technical/research/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("research-run.json", "utf8"));
+            const acceptedStorage = ["not-eligible", "stored", "already-stored"].includes(data.storageState);
+            if (data.status !== "ready" || data.readOnly !== true || !acceptedStorage || data.executionAllowed !== false || data.productionTechnicalEligible !== false) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              state: data.researchState,
+              storage: data.storageState,
+              modelVersion: data.modelVersion,
+              sourceSamples: data.sourceSamples,
+              eligibleBars: data.eligibleBars,
+              contiguousBars: data.latestContiguousBars,
+              backtest: data.backtest?.state
+            }));
+          '
+
+  news-correlation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    concurrency:
+      group: crude-intelligence-news-five-minute
+      cancel-in-progress: false
+    steps:
+      - name: Run audited news-correlation ingestion independently
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 120 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Scheduler: github-actions" \
+            -H "Accept: application/json" \
+            -o run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("run.json", "utf8"));
+            const accepted = ["ready", "partial"].includes(data.status);
+            const expectedTrigger = data.run?.trigger === "cloud-scheduler:github-actions";
+            if (!accepted || !expectedTrigger) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              runId: data.run.id,
+              trigger: data.run.trigger,
               completedAt: data.run.completedAt
             }));
           '
