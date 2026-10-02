@@ -30,6 +30,10 @@ delay or suppress market capture. The research call accepts only controlled
 `not-eligible`, `stored` or `already-stored` outcomes and confirms that
 production technical execution remains disabled.
 
+Market capture performs one bounded scheduler retry. Instrument discovery has
+its own bounded failover across Kotak's documented primary and ADC production
+hosts, so an upstream outage does not create an uncontrolled retry storm.
+
 The JODI workflow is scheduled at `02:20 UTC` daily. Repeated source files are idempotent; a changed controlled dataset or source revision creates a new append-only vintage.
 
 The broad news workflow is scheduled at `02:35 UTC` (`08:05 Asia/Kolkata`) daily. It calls the owner-private Site, where server-side source policy and analysis are enforced; the public scheduler repository contains no news or AI API secret.

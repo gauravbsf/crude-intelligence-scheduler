@@ -23,7 +23,7 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail-with-body --silent --show-error \
-            --retry 3 \
+            --retry 1 \
             --retry-all-errors \
             --retry-delay 8 \
             --connect-timeout 10 \
