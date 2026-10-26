@@ -1,0 +1,109 @@
+name: Crude Intelligence windowed five-minute news correlation
+
+on:
+  schedule:
+    - cron: "2,17,32,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Controlled capture count (1 for verification, 3 for a full window)"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crude-intelligence-windowed-news-correlation
+  cancel-in-progress: false
+
+jobs:
+  capture-window:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    env:
+      SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+      RUN_COUNT: ${{ github.event_name == 'schedule' && '3' || inputs.iterations || '1' }}
+    steps:
+      - name: Capture audited five-minute news windows
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for iteration in $(seq 1 "${RUN_COUNT}"); do
+            curl --fail-with-body --silent --show-error \
+              --retry 2 \
+              --retry-all-errors \
+              --retry-delay 8 \
+              --connect-timeout 10 \
+              --max-time 120 \
+              -X POST \
+              -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+              -H "X-CrudeIntel-Scheduler: github-actions" \
+              -H "Accept: application/json" \
+              -o "run-${iteration}.json" \
+              "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/run"
+
+            RUN_FILE="run-${iteration}.json" ITERATION="${iteration}" node -e '
+              const fs = require("fs");
+              const data = JSON.parse(fs.readFileSync(process.env.RUN_FILE, "utf8"));
+              const accepted = ["ready", "partial"].includes(data.status);
+              const valid = accepted
+                && data.readOnly === true
+                && data.run?.trigger === "cloud-scheduler:github-actions"
+                && data.run?.jobName === "news-event-price-correlation";
+              if (!valid) {
+                console.error(JSON.stringify(data));
+                process.exit(1);
+              }
+              console.log(JSON.stringify({
+                iteration: Number(process.env.ITERATION),
+                status: data.status,
+                runId: data.run.id,
+                eventsSeen: data.run.eventsSeen,
+                eventsStored: data.run.eventsStored,
+                snapshotsStored: data.run.snapshotsStored,
+                completedAt: data.run.completedAt
+              }));
+            '
+
+            if [ "${iteration}" -lt "${RUN_COUNT}" ]; then
+              sleep 300
+            fi
+          done
+
+      - name: Verify latest append-only scheduler ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "Accept: application/json" \
+            -o status.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/status"
+
+          LAST_FILE="run-${RUN_COUNT}.json" node -e '
+            const fs = require("fs");
+            const run = JSON.parse(fs.readFileSync(process.env.LAST_FILE, "utf8"));
+            const status = JSON.parse(fs.readFileSync("status.json", "utf8"));
+            const valid = status.status === "ready"
+              && status.cloudScheduler?.latest?.id === run.run?.id
+              && status.cloudScheduler?.ageMinutes <= 5
+              && status.cloudScheduler?.state === "healthy";
+            if (!valid) {
+              console.error(JSON.stringify({ run, status }));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: status.status,
+              schedulerState: status.cloudScheduler.state,
+              runId: status.cloudScheduler.latest.id,
+              ageMinutes: status.cloudScheduler.ageMinutes,
+              trigger: status.cloudScheduler.latest.trigger,
+              cadence: status.schedule?.cadence
+            }));
+          '
