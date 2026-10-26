@@ -1,0 +1,99 @@
+name: Controlled news-to-TrackMeter production-path test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crude-intelligence-controlled-trackmeter-test
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Run isolated verified geopolitical fixture
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 120 \
+            -X POST \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "X-CrudeIntel-Controlled-Test: trackmeter-v1" \
+            -H "Accept: application/json" \
+            -o test-run.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/test/run"
+
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync("test-run.json", "utf8"));
+            const result = data.result || {};
+            const valid = data.status === "ready"
+              && data.readOnly === true
+              && data.storageState === "stored"
+              && result.schemaVersion === "trackmeter-control-v1"
+              && result.isolated === true
+              && result.executionAllowed === false
+              && result.verdict === "passed"
+              && result.gates?.eligible === true
+              && result.after?.news > result.before?.news
+              && result.after?.hybrid > result.before?.hybrid;
+            if (!valid) {
+              console.error(JSON.stringify(data));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: data.status,
+              runId: data.runId,
+              isolated: result.isolated,
+              executionAllowed: result.executionAllowed,
+              verdict: result.verdict,
+              news: [result.before.news, result.after.news],
+              foundational: [result.before.foundational, result.after.foundational],
+              hybrid: [result.before.hybrid, result.after.hybrid],
+              appliedScore: result.gates.appliedScore,
+              testedAt: result.testedAt
+            }));
+          '
+
+      - name: Verify append-only control ledger
+        env:
+          SITE_TOKEN: ${{ secrets.CRUDE_INTELLIGENCE_SITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "OAI-Sites-Authorization: Bearer ${SITE_TOKEN}" \
+            -H "Accept: application/json" \
+            -o test-status.json \
+            "https://crude-intelligence-gaura.gauravkumar-ips.chatgpt.site/api/intelligence/news/test/status"
+
+          node -e '
+            const fs = require("fs");
+            const run = JSON.parse(fs.readFileSync("test-run.json", "utf8"));
+            const status = JSON.parse(fs.readFileSync("test-status.json", "utf8"));
+            if (status.status !== "ready" || status.latest?.id !== run.runId || status.latest?.result?.verdict !== "passed") {
+              console.error(JSON.stringify({ run, status }));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({
+              status: status.status,
+              runId: status.latest.id,
+              trigger: status.latest.trigger,
+              completedAt: status.latest.completedAt,
+              verdict: status.latest.result.verdict
+            }));
+          '
